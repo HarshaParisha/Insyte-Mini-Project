@@ -1,3 +1,5 @@
+<<<<<<< HEAD
+
 # 🧠 Insyte AI - Self-Hosted Productivity Assistant
 
 **Version:** 1.0.0  
