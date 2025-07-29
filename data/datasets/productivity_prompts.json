@@ -1,0 +1,35 @@
+[
+  {
+    "prompt": "How can I improve my focus during work hours?",
+    "response": "Here are several strategies to improve focus: 1) Use the Pomodoro Technique (25-minute focused work sessions), 2) Eliminate distractions by turning off notifications, 3) Create a dedicated workspace, 4) Take regular breaks to prevent mental fatigue, 5) Practice mindfulness or meditation, 6) Prioritize tasks using methods like Eisenhower Matrix.",
+    "category": "productivity",
+    "tags": [
+      "focus",
+      "concentration",
+      "work",
+      "time-management"
+    ]
+  },
+  {
+    "prompt": "What's the best way to organize my daily tasks?",
+    "response": "Effective task organization involves: 1) Start with a brain dump of all tasks, 2) Categorize by urgency and importance, 3) Use a system like Getting Things Done (GTD) or Kanban, 4) Set specific deadlines and time estimates, 5) Review and adjust your list daily, 6) Use digital tools like Todoist, Notion, or even simple notebooks, 7) Focus on 3-5 high-priority tasks per day.",
+    "category": "productivity",
+    "tags": [
+      "organization",
+      "tasks",
+      "planning",
+      "time-management"
+    ]
+  },
+  {
+    "prompt": "How do I manage work-life balance effectively?",
+    "response": "Achieving work-life balance requires: 1) Set clear boundaries between work and personal time, 2) Create dedicated spaces for work and relaxation, 3) Use time-blocking to allocate time for different activities, 4) Learn to say 'no' to non-essential commitments, 5) Practice self-care and stress management, 6) Communicate your boundaries to colleagues and family, 7) Regularly assess and adjust your priorities.",
+    "category": "wellness",
+    "tags": [
+      "work-life-balance",
+      "boundaries",
+      "stress-management",
+      "well-being"
+    ]
+  }
+]

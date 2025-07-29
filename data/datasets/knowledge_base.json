@@ -1,0 +1,35 @@
+[
+  {
+    "title": "Pomodoro Technique Guide",
+    "content": "The Pomodoro Technique is a time management method that uses a timer to break work into intervals, traditionally 25 minutes in length, separated by short breaks. These intervals are called pomodoros. The technique was developed by Francesco Cirillo in the late 1980s. The method is based on the idea that frequent breaks can improve mental agility and focus.",
+    "category": "productivity-methods",
+    "tags": [
+      "time-management",
+      "focus",
+      "productivity",
+      "technique"
+    ]
+  },
+  {
+    "title": "Getting Things Done (GTD) Overview",
+    "content": "Getting Things Done (GTD) is a personal productivity system developed by David Allen. The GTD method rests on the idea of moving planned tasks and projects out of the mind by recording them externally and then breaking them into actionable work items. This allows attention to be focused on taking action on tasks, rather than recalling them.",
+    "category": "productivity-methods",
+    "tags": [
+      "gtd",
+      "productivity",
+      "organization",
+      "system"
+    ]
+  },
+  {
+    "title": "Mindfulness and Productivity",
+    "content": "Mindfulness can significantly enhance productivity by improving focus, reducing stress, and increasing self-awareness. Regular meditation practice, even just 10 minutes daily, can help develop better attention control, emotional regulation, and cognitive flexibility. Mindful work practices include single-tasking, regular check-ins with your mental state, and conscious breathing during stressful moments.",
+    "category": "wellness",
+    "tags": [
+      "mindfulness",
+      "meditation",
+      "stress-reduction",
+      "focus"
+    ]
+  }
+]
