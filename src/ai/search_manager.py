@@ -254,3 +254,94 @@ class SearchManager:
         except Exception as e:
             self.logger.error(f"Failed to clear index: {str(e)}")
             return False
+    
+    # ==================== PROJECT-BASED SEARCH ====================
+    
+    def build_project_index(self, project_documents: List[Dict[str, Any]]) -> bool:
+        """
+        Build FAISS index from project documents.
+        
+        Args:
+            project_documents: List of document dicts with 'content', 'id', 'filename', etc.
+            
+        Returns:
+            bool: True if successful
+        """
+        if not self.embedding_model:
+            if not self.load_embedding_model():
+                return False
+        
+        try:
+            # Clear existing index
+            if not self.index:
+                self.create_index()
+            else:
+                dimension = self.index.d
+                self.index = faiss.IndexFlatIP(dimension)
+                self.documents = []
+                self.metadata = []
+            
+            if not project_documents:
+                self.logger.info("No documents to index")
+                return True
+            
+            # Extract content and metadata
+            documents = []
+            metadata = []
+            
+            for doc in project_documents:
+                content = doc.get('content', '')
+                if content and content.strip():
+                    documents.append(content)
+                    metadata.append({
+                        'doc_id': doc.get('id'),
+                        'filename': doc.get('original_filename', doc.get('filename', 'Unknown')),
+                        'file_type': doc.get('file_type', ''),
+                        'page_count': doc.get('page_count', 0),
+                        'upload_date': doc.get('upload_date', '')
+                    })
+            
+            if not documents:
+                self.logger.warning("No valid document content found")
+                return True
+            
+            # Add to index
+            return self.add_documents(documents, metadata)
+            
+        except Exception as e:
+            self.logger.error(f"Failed to build project index: {str(e)}")
+            return False
+    
+    def search_project(self, query: str, k: int = 10, threshold: float = 0.25) -> List[Dict[str, Any]]:
+        """
+        Search within project documents with enhanced results.
+        
+        Args:
+            query: Search query
+            k: Number of results
+            threshold: Minimum similarity (0-1)
+            
+        Returns:
+            List of enhanced search results
+        """
+        results = self.search(query, k=k, threshold=threshold)
+        
+        # Enhance results with percentage scores
+        for result in results:
+            result['similarity_percentage'] = round(result['score'] * 100, 1)
+            
+            # Add relevance level
+            if result['score'] >= 0.7:
+                result['relevance'] = 'high'
+                result['relevance_emoji'] = '🎯'
+            elif result['score'] >= 0.5:
+                result['relevance'] = 'medium'
+                result['relevance_emoji'] = '✨'
+            elif result['score'] >= 0.3:
+                result['relevance'] = 'low'
+                result['relevance_emoji'] = '💡'
+            else:
+                result['relevance'] = 'minimal'
+                result['relevance_emoji'] = '📄'
+        
+        return results

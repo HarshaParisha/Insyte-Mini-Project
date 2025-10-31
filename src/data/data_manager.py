@@ -429,3 +429,332 @@ class DataManager:
         except Exception as e:
             self.logger.error(f"Failed to get database stats: {str(e)}")
             return {}
+    
+    # ==================== PROJECT MANAGEMENT ====================
+    
+    def create_project_tables(self) -> bool:
+        """Create tables for project-based document management."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                # Projects table
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS projects (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        name TEXT NOT NULL UNIQUE,
+                        description TEXT,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        metadata TEXT
+                    )
+                ''')
+                
+                # Project documents table
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS project_documents (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        project_id INTEGER NOT NULL,
+                        filename TEXT NOT NULL,
+                        original_filename TEXT NOT NULL,
+                        file_type TEXT NOT NULL,
+                        content TEXT NOT NULL,
+                        file_size INTEGER,
+                        page_count INTEGER,
+                        upload_date DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        metadata TEXT,
+                        FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+                    )
+                ''')
+                
+                # Indexes
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_projects_name ON projects(name)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_project_docs_project ON project_documents(project_id)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_project_docs_type ON project_documents(file_type)')
+                
+                # Document Q&A table (auto-generated questions and answers)
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS document_qa (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        document_id INTEGER NOT NULL,
+                        question TEXT NOT NULL,
+                        answer TEXT NOT NULL,
+                        source TEXT,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (document_id) REFERENCES project_documents(id) ON DELETE CASCADE
+                    )
+                ''')
+                
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_qa_document ON document_qa(document_id)')
+                
+                conn.commit()
+                self.logger.info("Project tables created successfully")
+                return True
+                
+        except Exception as e:
+            self.logger.error(f"Failed to create project tables: {str(e)}")
+            return False
+    
+    def create_project(self, name: str, description: str = "") -> Optional[int]:
+        """Create a new project."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    INSERT INTO projects (name, description)
+                    VALUES (?, ?)
+                ''', (name, description))
+                project_id = cursor.lastrowid
+                conn.commit()
+                self.logger.info(f"Created project: {name} (ID: {project_id})")
+                return project_id
+        except sqlite3.IntegrityError:
+            self.logger.warning(f"Project already exists: {name}")
+            return None
+        except Exception as e:
+            self.logger.error(f"Failed to create project: {str(e)}")
+            return None
+    
+    def get_all_projects(self) -> List[Dict[str, Any]]:
+        """Get all projects with document counts."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT p.id, p.name, p.description, p.created_at, p.updated_at,
+                           COUNT(pd.id) as doc_count
+                    FROM projects p
+                    LEFT JOIN project_documents pd ON p.id = pd.project_id
+                    GROUP BY p.id
+                    ORDER BY p.updated_at DESC
+                ''')
+                
+                projects = []
+                for row in cursor.fetchall():
+                    projects.append({
+                        'id': row[0],
+                        'name': row[1],
+                        'description': row[2],
+                        'created_at': row[3],
+                        'updated_at': row[4],
+                        'doc_count': row[5]
+                    })
+                return projects
+                
+        except Exception as e:
+            self.logger.error(f"Failed to get projects: {str(e)}")
+            return []
+    
+    def get_project_by_id(self, project_id: int) -> Optional[Dict[str, Any]]:
+        """Get project details by ID."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT id, name, description, created_at, updated_at
+                    FROM projects WHERE id = ?
+                ''', (project_id,))
+                row = cursor.fetchone()
+                if row:
+                    return {
+                        'id': row[0],
+                        'name': row[1],
+                        'description': row[2],
+                        'created_at': row[3],
+                        'updated_at': row[4]
+                    }
+                return None
+        except Exception as e:
+            self.logger.error(f"Failed to get project: {str(e)}")
+            return None
+    
+    def save_project_document(self, project_id: int, filename: str, 
+                             original_filename: str, file_type: str, 
+                             content: str, file_size: int = 0, 
+                             page_count: int = 0, metadata: Dict = None) -> Optional[int]:
+        """Save a document to a project."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    INSERT INTO project_documents 
+                    (project_id, filename, original_filename, file_type, content, 
+                     file_size, page_count, metadata)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (project_id, filename, original_filename, file_type, content, 
+                      file_size, page_count, json.dumps(metadata) if metadata else None))
+                
+                doc_id = cursor.lastrowid
+                
+                # Update project's updated_at
+                cursor.execute('''
+                    UPDATE projects SET updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                ''', (project_id,))
+                
+                conn.commit()
+                self.logger.info(f"Saved document to project {project_id}: {original_filename}")
+                return doc_id
+                
+        except Exception as e:
+            self.logger.error(f"Failed to save project document: {str(e)}")
+            return None
+    
+    def get_project_documents(self, project_id: int) -> List[Dict[str, Any]]:
+        """Get all documents in a project."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT id, filename, original_filename, file_type, content,
+                           file_size, page_count, upload_date, metadata
+                    FROM project_documents
+                    WHERE project_id = ?
+                    ORDER BY upload_date DESC
+                ''', (project_id,))
+                
+                documents = []
+                for row in cursor.fetchall():
+                    documents.append({
+                        'id': row[0],
+                        'filename': row[1],
+                        'original_filename': row[2],
+                        'file_type': row[3],
+                        'content': row[4],
+                        'file_size': row[5],
+                        'page_count': row[6],
+                        'upload_date': row[7],
+                        'metadata': json.loads(row[8]) if row[8] else {}
+                    })
+                return documents
+                
+        except Exception as e:
+            self.logger.error(f"Failed to get project documents: {str(e)}")
+            return []
+    
+    def delete_project(self, project_id: int) -> bool:
+        """Delete a project and all its documents."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('DELETE FROM projects WHERE id = ?', (project_id,))
+                conn.commit()
+                self.logger.info(f"Deleted project {project_id}")
+                return True
+        except Exception as e:
+            self.logger.error(f"Failed to delete project: {str(e)}")
+            return False
+    
+    def delete_project_document(self, document_id: int) -> bool:
+        """Delete a document from a project."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('DELETE FROM project_documents WHERE id = ?', (document_id,))
+                conn.commit()
+                self.logger.info(f"Deleted document {document_id}")
+                return True
+        except Exception as e:
+            self.logger.error(f"Failed to delete document: {str(e)}")
+            return False
+    
+    # ==================== Q&A MANAGEMENT ====================
+    
+    def save_document_qa_pairs(self, document_id: int, qa_pairs: List[Dict[str, str]]) -> bool:
+        """
+        Save Q&A pairs for a document.
+        
+        Args:
+            document_id: Document ID
+            qa_pairs: List of dicts with 'question', 'answer', 'source' keys
+            
+        Returns:
+            bool: True if successful
+        """
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                # Delete existing Q&A for this document
+                cursor.execute('DELETE FROM document_qa WHERE document_id = ?', (document_id,))
+                
+                # Insert new Q&A pairs
+                for qa in qa_pairs:
+                    cursor.execute('''
+                        INSERT INTO document_qa (document_id, question, answer, source)
+                        VALUES (?, ?, ?, ?)
+                    ''', (document_id, qa['question'], qa['answer'], qa.get('source', '')))
+                
+                conn.commit()
+                self.logger.info(f"Saved {len(qa_pairs)} Q&A pairs for document {document_id}")
+                return True
+                
+        except Exception as e:
+            self.logger.error(f"Failed to save Q&A pairs: {str(e)}")
+            return False
+    
+    def get_project_qa_pairs(self, project_id: int, limit: int = 50) -> List[Dict[str, Any]]:
+        """
+        Get all Q&A pairs for a project.
+        
+        Args:
+            project_id: Project ID
+            limit: Maximum number of Q&A pairs to return
+            
+        Returns:
+            List of Q&A dictionaries
+        """
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT qa.id, qa.question, qa.answer, qa.source, 
+                           pd.original_filename, qa.created_at
+                    FROM document_qa qa
+                    JOIN project_documents pd ON qa.document_id = pd.id
+                    WHERE pd.project_id = ?
+                    ORDER BY qa.created_at DESC
+                    LIMIT ?
+                ''', (project_id, limit))
+                
+                qa_pairs = []
+                for row in cursor.fetchall():
+                    qa_pairs.append({
+                        'id': row[0],
+                        'question': row[1],
+                        'answer': row[2],
+                        'source': row[3],
+                        'filename': row[4],
+                        'created_at': row[5]
+                    })
+                return qa_pairs
+                
+        except Exception as e:
+            self.logger.error(f"Failed to get Q&A pairs: {str(e)}")
+            return []
+    
+    def get_document_qa_pairs(self, document_id: int) -> List[Dict[str, str]]:
+        """Get Q&A pairs for a specific document."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT id, question, answer, source
+                    FROM document_qa
+                    WHERE document_id = ?
+                    ORDER BY id
+                ''', (document_id,))
+                
+                qa_pairs = []
+                for row in cursor.fetchall():
+                    qa_pairs.append({
+                        'id': row[0],
+                        'question': row[1],
+                        'answer': row[2],
+                        'source': row[3]
+                    })
+                return qa_pairs
+                
+        except Exception as e:
+            self.logger.error(f"Failed to get document Q&A: {str(e)}")
+            return []

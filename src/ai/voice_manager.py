@@ -5,10 +5,22 @@ Handles offline voice transcription using OpenAI Whisper for productivity featur
 
 import whisper
 import numpy as np
-import soundfile as sf
 import logging
 from typing import Optional, Dict, Any
 import os
+
+# Try to import audio libraries
+try:
+    import soundfile as sf
+    HAS_SOUNDFILE = True
+except:
+    HAS_SOUNDFILE = False
+
+try:
+    import librosa
+    HAS_LIBROSA = True
+except:
+    HAS_LIBROSA = False
 
 class VoiceManager:
     def __init__(self, model_size: str = "base"):
@@ -39,13 +51,14 @@ class VoiceManager:
             self.logger.error(f"Failed to load Whisper model: {str(e)}")
             return False
     
-    def transcribe_audio(self, audio_path: str, language: str = "en") -> Dict[str, Any]:
+    def transcribe_audio(self, audio_path: str, language: str = None) -> Dict[str, Any]:
         """
         Transcribe audio file to text.
         
         Args:
             audio_path: Path to audio file
-            language: Language code for transcription (e.g., 'en' for English)
+            language: Language code for transcription (e.g., 'en' for English). 
+                     If None, language will be auto-detected.
             
         Returns:
             dict: Transcription result with text, segments, and metadata
@@ -59,34 +72,94 @@ class VoiceManager:
         try:
             self.logger.info(f"Transcribing audio: {audio_path}")
             
+            # Check file size
+            file_size = os.path.getsize(audio_path)
+            self.logger.info(f"Audio file size: {file_size / (1024*1024):.2f} MB")
+            
+            if file_size == 0:
+                raise ValueError("Audio file is empty (0 bytes)")
+            
+            # Load audio using available library (fallback chain)
+            audio_data = None
+            
+            # Try librosa first (most reliable for various formats)
+            if HAS_LIBROSA:
+                try:
+                    self.logger.info("Loading audio with librosa...")
+                    audio_data, sr = librosa.load(audio_path, sr=16000, mono=True)
+                    self.logger.info(f"Audio loaded: {len(audio_data)} samples at {sr}Hz")
+                except Exception as e:
+                    self.logger.warning(f"Librosa failed: {e}")
+            
+            # Try soundfile as fallback
+            if audio_data is None and HAS_SOUNDFILE:
+                try:
+                    self.logger.info("Loading audio with soundfile...")
+                    audio_data, sr = sf.read(audio_path)
+                    # Convert to mono if stereo
+                    if len(audio_data.shape) > 1:
+                        audio_data = audio_data.mean(axis=1)
+                    # Resample to 16kHz if needed
+                    if sr != 16000:
+                        # Simple resampling
+                        audio_data = librosa.resample(audio_data, orig_sr=sr, target_sr=16000) if HAS_LIBROSA else audio_data
+                    self.logger.info(f"Audio loaded: {len(audio_data)} samples")
+                except Exception as e:
+                    self.logger.warning(f"Soundfile failed: {e}")
+            
+            # If both failed, try Whisper's built-in loading (requires ffmpeg)
+            if audio_data is None:
+                self.logger.info("Trying Whisper's built-in audio loading (requires ffmpeg)...")
+                # Whisper will attempt to use ffmpeg
+                audio_data = audio_path  # Pass path directly to Whisper
+            
             # Transcribe with Whisper
-            result = self.model.transcribe(
-                audio_path,
-                language=language,
-                word_timestamps=True
-            )
+            transcribe_options = {
+                "fp16": False,  # Use FP32 for CPU compatibility
+                "verbose": False
+            }
+            
+            # Only add language if specified
+            if language:
+                transcribe_options["language"] = language
+            
+            self.logger.info(f"Starting Whisper transcription with options: {transcribe_options}")
+            
+            # Pass audio data or path to Whisper
+            result = self.model.transcribe(audio_data, **transcribe_options)
             
             # Extract relevant information
             transcription = {
                 "text": result["text"].strip(),
-                "language": result["language"],
-                "segments": result["segments"],
-                "duration": result.get("duration", 0),
-                "confidence": self._calculate_confidence(result["segments"])
+                "language": result.get("language", "unknown"),
+                "segments": result.get("segments", []),
+                "duration": 0,
+                "confidence": self._calculate_confidence(result.get("segments", []))
             }
             
-            self.logger.info("Transcription completed successfully")
+            # Calculate duration from segments if available
+            if transcription["segments"]:
+                last_segment = transcription["segments"][-1]
+                transcription["duration"] = last_segment.get("end", 0)
+            
+            self.logger.info(f"Transcription completed successfully. Text length: {len(transcription['text'])} chars")
             return transcription
             
         except Exception as e:
-            self.logger.error(f"Error during transcription: {str(e)}")
+            error_msg = str(e)
+            self.logger.error(f"Error during transcription: {error_msg}", exc_info=True)
+            
+            # Provide helpful error message
+            if "ffmpeg" in error_msg.lower() or "WinError 2" in error_msg:
+                error_msg = "FFmpeg not found. Please install FFmpeg or librosa: pip install librosa"
+            
             return {
                 "text": "",
-                "language": language,
+                "language": language or "unknown",
                 "segments": [],
                 "duration": 0,
                 "confidence": 0.0,
-                "error": str(e)
+                "error": error_msg
             }
     
     def transcribe_numpy_array(self, audio_data: np.ndarray, sample_rate: int = 16000) -> Dict[str, Any]:

@@ -19,6 +19,8 @@ from ai.voice_manager import VoiceManager
 from ai.search_manager import SearchManager
 from data.data_manager import DataManager
 from data.data_loader import DataLoader
+from utils.document_processor import DocumentProcessor
+from utils.qa_generator import QAGenerator
 
 # Configure Streamlit page
 st.set_page_config(
@@ -50,6 +52,9 @@ if 'search_manager' not in st.session_state:
 
 if 'voice_manager' not in st.session_state:
     st.session_state.voice_manager = VoiceManager()
+
+if 'qa_generator' not in st.session_state:
+    st.session_state.qa_generator = QAGenerator()
 
 def main():
     """Main dashboard application."""
@@ -155,7 +160,7 @@ def show_dashboard():
         st.metric("Documents Stored", len(documents))
     
     with col3:
-        # Get recent productivity metrics
+        # Get recent productivity metrics - use today's date dynamically
         end_date = datetime.now().strftime('%Y-%m-%d')
         start_date = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
         metrics = st.session_state.data_manager.get_productivity_metrics(start_date, end_date)
@@ -195,13 +200,75 @@ def show_dashboard():
     
     with tab3:
         if metrics:
+            # Convert to DataFrame and ensure proper date handling
             df = pd.DataFrame(metrics)
             if not df.empty:
-                fig = px.line(df, x='date', y='metric_value', color='metric_type',
-                             title="Recent Productivity Metrics")
+                # Convert date strings to datetime for proper plotting
+                df['date'] = pd.to_datetime(df['date'])
+                
+                # Create the metrics graph
+                fig = px.line(
+                    df, 
+                    x='date', 
+                    y='metric_value', 
+                    color='metric_type',
+                    title=f"Productivity Metrics ({start_date} to {end_date})",
+                    labels={'date': 'Date', 'metric_value': 'Value', 'metric_type': 'Metric Type'}
+                )
+                
+                # Update layout for better visualization
+                fig.update_xaxes(
+                    tickformat="%b %d\n%Y",
+                    tickangle=-45,
+                    dtick="D1"  # Show every day
+                )
+                
+                fig.update_layout(
+                    xaxis_title="Date",
+                    yaxis_title="Metric Value",
+                    hovermode='x unified',
+                    showlegend=True
+                )
+                
                 st.plotly_chart(fig, use_container_width=True)
+                
+                # Add helpful information about metrics
+                st.markdown("---")
+                st.markdown("### 📊 Understanding Your Metrics")
+                
+                col_a, col_b = st.columns(2)
+                
+                with col_a:
+                    st.markdown("""
+                    **📈 Why Track Metrics?**
+                    - **Identify Patterns**: See your most productive times
+                    - **Track Progress**: Monitor improvement over time
+                    - **Stay Accountable**: Visual reminders of your goals
+                    - **Data-Driven**: Make informed productivity decisions
+                    """)
+                
+                with col_b:
+                    st.markdown("""
+                    **💡 How to Use Metrics:**
+                    - **Daily Review**: Check trends at day's end
+                    - **Weekly Analysis**: Compare performance across days
+                    - **Goal Setting**: Use data to set realistic targets
+                    - **Habit Building**: Track consistency and streaks
+                    """)
+                
+                st.info("💡 **Note**: Metrics are automatically tracked daily. The graph updates with each new entry to show your latest productivity trends.")
+                
+                # Add note about reset time
+                st.markdown("""
+                <div style="background: #2a2a2a; padding: 15px; border-radius: 8px; margin-top: 10px; border-left: 4px solid #667eea;">
+                    <p style="margin: 0; color: #aaa; font-size: 0.95em;">
+                        ⏰ <strong>Daily Reset:</strong> Metrics are calculated and reset at <strong>12:00 PM (noon)</strong> each day. 
+                        Current data reflects metrics from the last reset period.
+                    </p>
+                </div>
+                """, unsafe_allow_html=True)
         else:
-            st.info("No productivity metrics recorded yet.")
+            st.info("No productivity metrics recorded yet. Start tracking your productivity in the Analytics tab!")
 
 def show_chat_interface():
     """AI chat interface with productivity assistant."""
@@ -430,91 +497,528 @@ def show_analytics():
     st.dataframe(df[['date', 'metric_type', 'metric_value', 'description']], use_container_width=True)
 
 def show_search_interface():
-    """Semantic search interface for finding similar documents using AI."""
+    """Professional project-based document search with clean UI."""
     
-    st.title("🔍 Semantic Search")
+    st.title("🔍 AI Document Search")
+    st.caption("Upload documents (PDF/DOCX/TXT) • Organize in projects • Search with AI")
     
-    # Explanation of what search does
-    with st.expander("ℹ️ What is Semantic Search?", expanded=False):
-        st.markdown("""
-        **Semantic Search** uses AI to understand the *meaning* of your queries, not just keywords.
-        
-        **How it works:**
-        - 🧠 Your documents are converted to AI embeddings (numerical representations)
-        - 🔍 When you search, your query is also converted to an embedding
-        - 📊 The system finds documents with similar meanings, even if they use different words
-        
-        **Example Use Cases:**
-        - Find all notes about "productivity" (even if they mention "efficiency", "time management", etc.)
-        - Search for "how to focus" and get documents about concentration, meditation, and work habits
-        - Discover related ideas you forgot about by searching with natural language
-        
-        **Perfect for:**
-        - Personal knowledge bases
-        - Meeting notes and ideas
-        - Research documents
-        - Task descriptions and project notes
-        """)
+    # Initialize components
+    if 'doc_processor' not in st.session_state:
+        st.session_state.doc_processor = DocumentProcessor()
     
-    # Check if search index is loaded
-    search_info = st.session_state.search_manager.get_index_info()
-    if search_info['status'] != 'loaded':
-        st.warning("⚠️ Search index not loaded yet.")
-        st.info("👉 Go to **Settings → Search Index Management** to initialize the search system and add documents.")
-        
-        # Quick stats
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("📄 Documents in Database", len(st.session_state.data_manager.get_documents(limit=1000)))
-        with col2:
-            st.metric("🔍 Indexed Documents", 0)
-        return
+    st.session_state.data_manager.create_project_tables()
     
-    # Show index stats
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("📄 Indexed Documents", search_info['total_documents'])
-    with col2:
-        st.metric("🧠 Embedding Model", search_info['embedding_model'].split('/')[-1])
-    with col3:
-        st.metric("📊 Vector Dimension", search_info['dimension'])
+    # Get all projects
+    projects = st.session_state.data_manager.get_all_projects()
     
     st.markdown("---")
     
-    # Search interface
-    query = st.text_input(
-        "🔍 Search your knowledge base:", 
-        placeholder="e.g., 'improve focus and productivity' or 'time management tips'",
-        help="Enter a natural language query - the AI will find semantically similar documents"
-    )
+    # PROFESSIONAL LAYOUT: Project Management Bar
+    if projects:
+        # Existing projects - show selection bar
+        col1, col2 = st.columns([3, 1])
+        
+        with col1:
+            project_options = {f"📁 {proj['name']} ({proj['doc_count']} docs)": proj['id'] 
+                             for proj in projects}
+            
+            # Add "Create New" option at the end
+            project_options["➕ Create New Project"] = "CREATE_NEW"
+            
+            selected_display = st.selectbox(
+                "Select Project",
+                options=list(project_options.keys()),
+                key="project_selector",
+                label_visibility="collapsed"
+            )
+            
+            selected_id = project_options[selected_display]
+            
+            if selected_id == "CREATE_NEW":
+                st.session_state.show_create_form = True
+                st.session_state.selected_project = None
+            else:
+                st.session_state.show_create_form = False
+                st.session_state.selected_project = selected_id
+        
+        with col2:
+            if st.session_state.get('selected_project'):
+                if st.button("🗑️ Delete Project", use_container_width=True):
+                    if st.session_state.data_manager.delete_project(st.session_state.selected_project):
+                        st.success("✅ Deleted!")
+                        st.session_state.selected_project = None
+                        st.session_state.pop('show_create_form', None)
+                        st.rerun()
+    else:
+        # No projects - show create form
+        st.session_state.show_create_form = True
     
-    col1, col2 = st.columns([1, 3])
-    with col1:
-        max_results = st.slider("Max Results", 1, 20, 5)
-    with col2:
-        min_score = st.slider("Minimum Similarity Score", 0.0, 1.0, 0.3, 0.1)
+    st.markdown("---")
     
-    if query:
-        with st.spinner("Searching..."):
-            try:
-                results = st.session_state.search_manager.search(
-                    query, k=max_results, threshold=min_score
+    # CREATE PROJECT FORM (when triggered)
+    if st.session_state.get('show_create_form', False):
+        st.markdown("### ➕ Create New Project")
+        
+        with st.form("create_project_form", clear_on_submit=True):
+            col1, col2 = st.columns([2, 1])
+            
+            with col1:
+                project_name = st.text_input(
+                    "Project Name *",
+                    placeholder="e.g., Research Papers, Marketing Docs",
+                    help="Give your project a descriptive name"
                 )
+            
+            with col2:
+                project_desc = st.text_input(
+                    "Description (Optional)",
+                    placeholder="Brief description",
+                    help="Optional short description"
+                )
+            
+            col1, col2, col3 = st.columns([1, 1, 2])
+            with col1:
+                submitted = st.form_submit_button("✅ Create", type="primary", use_container_width=True)
+            with col2:
+                cancel = st.form_submit_button("❌ Cancel", use_container_width=True)
+            
+            if submitted and project_name.strip():
+                project_id = st.session_state.data_manager.create_project(
+                    project_name.strip(), 
+                    project_desc.strip()
+                )
+                if project_id:
+                    st.session_state.selected_project = project_id
+                    st.session_state.show_create_form = False
+                    st.success(f"✅ Project '{project_name}' created!")
+                    st.rerun()
+                else:
+                    st.error("❌ Project name already exists!")
+            
+            elif submitted and not project_name.strip():
+                st.warning("⚠️ Please enter a project name")
+            
+            elif cancel:
+                st.session_state.show_create_form = False
+                if projects:
+                    st.session_state.selected_project = projects[0]['id']
+                st.rerun()
+        
+        st.markdown("---")
+        
+        # Show help for first-time users
+        if not projects:
+            st.info("👆 **First time?** Create your first project to organize and search your documents with AI!")
+        
+        return
+    
+    # NO PROJECTS - MINIMAL WELCOME
+    if not projects:
+        st.info("👆 Create your first project to get started with AI-powered document search!")
+        return
+    
+    # PROJECT SELECTED - SHOW INTERFACE
+    selected_proj_id = st.session_state.get('selected_project')
+    
+    if not selected_proj_id:
+        st.info("👆 Select a project from the dropdown above")
+        return
+    
+    project = st.session_state.data_manager.get_project_by_id(selected_proj_id)
+    
+    if not project:
+        st.error("❌ Project not found!")
+        st.session_state.selected_project = None
+        st.rerun()
+        return
+    
+    # Project Header (Minimal)
+    st.markdown(f"### 📁 {project['name']}")
+    if project['description']:
+        st.caption(project['description'])
+    
+    st.markdown("---")
+    
+    # CLEAN TAB INTERFACE
+    tab1, tab2, tab3 = st.tabs(["🔍 Search", "📤 Upload", "📚 Documents"])
+    
+    # ========== TAB 1: SEARCH ==========
+    with tab1:
+        documents = st.session_state.data_manager.get_project_documents(selected_proj_id)
+        
+        if not documents:
+            st.info("📄 No documents yet. Upload files in the **📤 Upload** tab!")
+        else:
+            # Build index using NLP semantic search
+            with st.spinner("🔄 Indexing documents with NLP..."):
+                success = st.session_state.search_manager.build_project_index(documents)
+            
+            if not success:
+                st.error("❌ Index failed")
+                return
+            
+            st.success(f"✅ {len(documents)} documents indexed with semantic embeddings")
+            
+            # Get suggested questions from database
+            qa_pairs = st.session_state.data_manager.get_project_qa_pairs(selected_proj_id, limit=10)
+            
+            # SUGGESTED QUESTIONS SECTION
+            if qa_pairs:
+                with st.expander("💡 **Suggested Questions** - Auto-generated from your documents", expanded=True):
+                    st.caption(f"{len(qa_pairs)} questions ready • Click to see answers")
+                    
+                    # Display in columns for better layout
+                    for i, qa in enumerate(qa_pairs[:6]):  # Show top 6
+                        col1, col2 = st.columns([4, 1])
+                        
+                        with col1:
+                            # Question as a button
+                            if st.button(
+                                f"❓ {qa['question']}", 
+                                key=f"qa_btn_{qa['id']}",
+                                use_container_width=True
+                            ):
+                                # Store selected Q&A in session state
+                                st.session_state.selected_qa = qa
+                        
+                        with col2:
+                            st.caption(f"📄 {qa['filename'][:15]}...")
+                    
+                    if len(qa_pairs) > 6:
+                        st.info(f"💡 Plus {len(qa_pairs) - 6} more questions available")
+            
+            # Show selected Q&A answer
+            if 'selected_qa' in st.session_state and st.session_state.selected_qa:
+                qa = st.session_state.selected_qa
                 
-                if results:
-                    st.success(f"Found {len(results)} relevant documents")
+                st.markdown("### 📌 Answer")
+                st.markdown(f"""
+                <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+                            padding: 3px; border-radius: 12px; margin: 15px 0;">
+                    <div style="background: #1a1a1a; padding: 20px; border-radius: 10px;">
+                        <h4 style="color: white; margin-bottom: 10px;">
+                            ❓ {qa['question']}
+                        </h4>
+                        <div style="color: #888; font-size: 0.9em; margin-bottom: 15px;">
+                            📄 Source: {qa['filename']}
+                        </div>
+                        <div style="color: #fff; line-height: 1.7; font-size: 1.05em;">
+                            {qa['answer']}
+                        </div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                if st.button("❌ Clear Answer", key="clear_qa"):
+                    st.session_state.selected_qa = None
+                    st.rerun()
+                
+                st.markdown("---")
+            
+            # Regular Search UI
+            st.markdown("### 🔍 Or Search Your Documents")
+            
+            query = st.text_input(
+                "Ask a question",
+                placeholder="e.g., 'What is Insyte AI?', 'Explain the architecture', 'Key features'",
+                help="Natural language search powered by NLP semantic understanding"
+            )
+            
+            # Simple settings
+            col1, col2 = st.columns([2, 1])
+            with col1:
+                st.caption("💡 Powered by Sentence-Transformers NLP • No LLM required")
+            with col2:
+                min_similarity = st.slider("Min Match %", 10, 80, 25, 5, help="Relevance threshold")
+            
+            if query:
+                # Semantic Search using NLP embeddings
+                with st.spinner("🔍 Searching with NLP..."):
+                    results = st.session_state.search_manager.search_project(
+                        query, k=10, threshold=min_similarity/100
+                    )
+                
+                if results and len(results) >= 3:
+                    # Show TOP 3 ANSWERS professionally
+                    st.markdown("### 📝 Top 3 Answers from Your Documents")
+                    st.caption(f"Found {len(results)} relevant sections • Showing best 3 matches")
+                    st.markdown("---")
+                    
+                    # Display 3 distinct answer cards
+                    for i, result in enumerate(results[:3], 1):
+                        similarity = result['similarity_percentage']
+                        filename = result['metadata']['filename']
+                        content = result['document']
+                        
+                        # Color gradient based on rank
+                        if i == 1:
+                            gradient = "linear-gradient(135deg, #667eea 0%, #764ba2 100%)"
+                            border_color = "#667eea"
+                            rank_emoji = "🥇"
+                            rank_text = "Best Match"
+                        elif i == 2:
+                            gradient = "linear-gradient(135deg, #f093fb 0%, #f5576c 100%)"
+                            border_color = "#f093fb"
+                            rank_emoji = "🥈"
+                            rank_text = "Second Match"
+                        else:
+                            gradient = "linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)"
+                            border_color = "#4facfe"
+                            rank_emoji = "🥉"
+                            rank_text = "Third Match"
+                        
+                        # Answer Card
+                        st.markdown(f"""
+                        <div style="background: {gradient}; padding: 3px; border-radius: 12px; margin: 20px 0;">
+                            <div style="background: #1a1a1a; padding: 20px; border-radius: 10px;">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                                    <h4 style="color: white; margin: 0;">
+                                        {rank_emoji} Answer {i} • {rank_text}
+                                    </h4>
+                                    <span style="background: {gradient}; color: white; 
+                                                padding: 5px 15px; border-radius: 20px; font-weight: 600;">
+                                        {similarity}% Match
+                                    </span>
+                                </div>
+                                <div style="color: #888; font-size: 0.9em; margin-bottom: 10px;">
+                                    � Source: {filename}
+                                </div>
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        
+                        # Show answer content in clean format
+                        with st.container():
+                            # Smart excerpt length based on content
+                            if len(content) > 500:
+                                excerpt = content[:500].strip()
+                                remaining = len(content) - 500
+                                st.markdown(f"**Answer:**")
+                                st.write(excerpt + "...")
+                                
+                                with st.expander(f"📖 Read full answer ({remaining} more characters)"):
+                                    st.text(content)
+                            else:
+                                st.markdown(f"**Answer:**")
+                                st.write(content)
+                        
+                        if i < 3:
+                            st.markdown("<br>", unsafe_allow_html=True)
+                    
+                    # Show additional results if any
+                    if len(results) > 3:
+                        st.markdown("---")
+                        with st.expander(f"📚 View {len(results) - 3} More Relevant Sections"):
+                            for i, result in enumerate(results[3:], 4):
+                                similarity = result['similarity_percentage']
+                                filename = result['metadata']['filename']
+                                
+                                st.markdown(f"**#{i}** • {filename} • {similarity}% match")
+                                with st.expander("Read excerpt"):
+                                    st.text(result['document'][:400] + "..." if len(result['document']) > 400 else result['document'])
+                
+                elif results and len(results) < 3:
+                    # Less than 3 results - Still show professionally with gradient cards
+                    st.markdown("### 📝 Search Results")
+                    st.caption(f"Found {len(results)} relevant section(s) • Lower the threshold to find more")
+                    st.markdown("---")
                     
                     for i, result in enumerate(results, 1):
-                        with st.expander(f"Result {i} - Score: {result['score']:.3f}"):
-                            st.write(result['document'])
-                            
-                            if result['metadata']:
-                                st.json(result['metadata'])
-                else:
-                    st.info("No results found. Try a different query or lower the similarity threshold.")
+                        similarity = result['similarity_percentage']
+                        filename = result['metadata']['filename']
+                        content = result['document']
+                        
+                        # Assign gradient colors based on position
+                        if i == 1:
+                            gradient = "linear-gradient(135deg, #667eea 0%, #764ba2 100%)"
+                            border_color = "#667eea"
+                            rank_emoji = "🥇"
+                        elif i == 2:
+                            gradient = "linear-gradient(135deg, #f093fb 0%, #f5576c 100%)"
+                            border_color = "#f093fb"
+                            rank_emoji = "🥈"
+                        else:
+                            gradient = "linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)"
+                            border_color = "#4facfe"
+                            rank_emoji = "🥉"
+                        
+                        # Professional Answer Card (same style as top 3)
+                        st.markdown(f"""
+                        <div style="background: {gradient}; padding: 3px; border-radius: 12px; margin: 20px 0;">
+                            <div style="background: #1a1a1a; padding: 20px; border-radius: 10px;">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                                    <h4 style="color: white; margin: 0;">
+                                        {rank_emoji} Answer {i}
+                                    </h4>
+                                    <span style="background: {gradient}; color: white; 
+                                                padding: 5px 15px; border-radius: 20px; font-weight: 600;">
+                                        {similarity}% Match
+                                    </span>
+                                </div>
+                                <div style="color: #888; font-size: 0.9em; margin-bottom: 10px;">
+                                    📄 Source: {filename}
+                                </div>
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        
+                        # Show content
+                        with st.container():
+                            if len(content) > 500:
+                                excerpt = content[:500].strip()
+                                remaining = len(content) - 500
+                                st.markdown("**Answer:**")
+                                st.write(excerpt + "...")
+                                
+                                with st.expander(f"📖 Read full answer ({remaining} more characters)"):
+                                    st.text(content)
+                            else:
+                                st.markdown("**Answer:**")
+                                st.write(content)
+                        
+                        if i < len(results):
+                            st.markdown("<br>", unsafe_allow_html=True)
                     
-            except Exception as e:
-                st.error(f"Search error: {str(e)}")
+                    # Helpful message
+                    st.markdown("---")
+                    st.info("💡 **Tip:** Lower the **Min Match %** slider to 20% or 15% to find more relevant sections from your documents!")
+                
+                else:
+                    # No results found
+                    st.markdown("### ❌ No Relevant Results Found")
+                    
+                    st.markdown("""
+                    <div style="background: linear-gradient(135deg, #ff6b6b 0%, #ee5a6f 100%); 
+                                padding: 3px; border-radius: 12px; margin: 20px 0;">
+                        <div style="background: #1a1a1a; padding: 25px; border-radius: 10px;">
+                            <h4 style="color: white; margin-bottom: 15px;">
+                                🔍 No matching content found in your documents
+                            </h4>
+                            <div style="color: #ccc; line-height: 1.8;">
+                                <p><strong>Try these solutions:</strong></p>
+                                <ul style="margin-left: 20px;">
+                                    <li>🎯 <strong>Lower the threshold:</strong> Set Min Match % to 15-20%</li>
+                                    <li>✏️ <strong>Rephrase your question:</strong> Use different keywords</li>
+                                    <li>📄 <strong>Check your documents:</strong> Ensure they contain relevant information</li>
+                                    <li>📤 <strong>Upload more files:</strong> Add documents related to your topic</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    # Show document count for context
+                    st.info(f"💡 Currently searching across **{len(documents)} document(s)** in this project")
+    
+    # ========== TAB 2: UPLOAD ==========
+    with tab2:
+        st.markdown("### 📤 Upload Documents")
+        st.caption("Supported: PDF, DOCX, TXT")
+        
+        uploaded_files = st.file_uploader(
+            "Choose files",
+            type=['pdf', 'docx', 'doc', 'txt'],
+            accept_multiple_files=True,
+            help="Upload multiple documents"
+        )
+        
+        if uploaded_files:
+            st.info(f"📁 {len(uploaded_files)} file(s) selected")
+            
+            if st.button("📥 Upload All", type="primary", use_container_width=True):
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                success_count = 0
+                fail_count = 0
+                
+                for idx, uploaded_file in enumerate(uploaded_files):
+                    status_text.text(f"Processing {uploaded_file.name}...")
+                    
+                    try:
+                        file_content = uploaded_file.read()
+                        text_content, metadata = st.session_state.doc_processor.process_file(
+                            file_content, uploaded_file.name
+                        )
+                        
+                        if text_content:
+                            # Save document
+                            doc_id = st.session_state.data_manager.save_project_document(
+                                project_id=selected_proj_id,
+                                filename=f"doc_{project['id']}_{uploaded_file.name}",
+                                original_filename=uploaded_file.name,
+                                file_type=metadata['file_type'],
+                                content=text_content,
+                                file_size=metadata['file_size'],
+                                page_count=metadata.get('page_count', 0),
+                                metadata=metadata
+                            )
+                            
+                            if doc_id:
+                                # Generate Q&A pairs in background
+                                status_text.text(f"Generating Q&A for {uploaded_file.name}...")
+                                qa_pairs = st.session_state.qa_generator.generate_qa_pairs(
+                                    text_content, 
+                                    uploaded_file.name,
+                                    max_pairs=10
+                                )
+                                
+                                # Save Q&A pairs to database
+                                if qa_pairs:
+                                    st.session_state.data_manager.save_document_qa_pairs(doc_id, qa_pairs)
+                                
+                                success_count += 1
+                            else:
+                                fail_count += 1
+                        else:
+                            fail_count += 1
+                    
+                    except Exception as e:
+                        fail_count += 1
+                        st.error(f"❌ {uploaded_file.name}: {str(e)}")
+                    
+                    progress_bar.progress((idx + 1) / len(uploaded_files))
+                
+                status_text.empty()
+                progress_bar.empty()
+                
+                if success_count > 0:
+                    st.success(f"✅ Uploaded {success_count} document(s) with auto-generated Q&A!")
+                    st.balloons()
+                    st.rerun()
+                if fail_count > 0:
+                    st.warning(f"⚠️ {fail_count} file(s) failed")
+    
+    # ========== TAB 3: DOCUMENTS ==========
+    with tab3:
+        documents = st.session_state.data_manager.get_project_documents(selected_proj_id)
+        
+        if not documents:
+            st.info("📄 No documents yet. Upload files in the **📤 Upload** tab!")
+        else:
+            st.markdown(f"### 📚 {len(documents)} Document(s)")
+            
+            for doc in documents:
+                with st.expander(f"📄 {doc['original_filename']}"):
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("Size", f"{doc['file_size'] / 1024:.1f} KB")
+                    with col2:
+                        if doc['page_count'] > 0:
+                            st.metric("Pages", doc['page_count'])
+                    with col3:
+                        date = doc['upload_date'].split()[0] if doc['upload_date'] else "N/A"
+                        st.metric("Date", date)
+                    
+                    st.markdown("**Preview:**")
+                    preview = doc['content'][:300]
+                    st.text(preview + "..." if len(doc['content']) > 300 else preview)
+                    
+                    if st.button(f"🗑️ Delete", key=f"del_doc_{doc['id']}", use_container_width=True):
+                        if st.session_state.data_manager.delete_project_document(doc['id']):
+                            st.success("✅ Deleted!")
+                            st.rerun()
+
 
 def show_voice_interface():
     """Professional voice transcription interface with Whisper AI."""
@@ -621,8 +1125,13 @@ def show_voice_interface():
                         status_text.text("Processing with Whisper AI...")
                         progress_bar.progress(40)
                         
-                        # Transcribe
+                        # Transcribe with better error handling
                         result = st.session_state.voice_manager.transcribe_audio(temp_path)
+                        
+                        # Check if there's an error in the result
+                        if 'error' in result and result['error']:
+                            raise Exception(result['error'])
+                        
                         progress_bar.progress(80)
                         
                         status_text.text("Finalizing transcription...")
@@ -755,7 +1264,7 @@ def show_settings():
     # Info about persistence
     st.info("💡 **Models stay loaded** during your session. They won't reload unless you restart the app or explicitly reload them.")
     
-    tab1, tab2, tab3, tab4 = st.tabs(["🤖 AI Models", "🔍 Search Index", "📊 Data", "🔧 System"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["🤖 AI Models", "🔍 Search Index", "📊 Data", "🔧 System", "🎨 Theme"])
     
     with tab1:
         st.subheader("🤖 AI Model Management")
@@ -967,6 +1476,162 @@ Python Implementation: {platform.python_implementation()}
         
         if st.button("🚀 Run Full Diagnostics", type="primary", use_container_width=True):
             run_diagnostics()
+    
+    with tab5:
+        st.subheader("🎨 Theme Settings")
+        
+        st.markdown("""
+        **Customize the appearance of Insyte AI**
+        
+        Choose between Light and Dark themes to match your preference.
+        """)
+        
+        st.markdown("---")
+        
+        # Current theme detection (based on config file)
+        from pathlib import Path
+        
+        config_path = Path(".streamlit/config.toml")
+        
+        # Read current theme
+        current_theme = "Dark"  # Default
+        if config_path.exists():
+            with open(config_path, 'r') as f:
+                content = f.read()
+                if 'backgroundColor = "#FFFFFF"' in content or 'backgroundColor = "#ffffff"' in content:
+                    current_theme = "Light"
+                elif 'backgroundColor = "#0E1117"' in content:
+                    current_theme = "Dark"
+        
+        st.info(f"🎨 **Current Theme**: {current_theme}")
+        
+        st.markdown("---")
+        
+        # Theme selector
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("### ☀️ Light Theme")
+            st.markdown("""
+            - Clean white background
+            - High contrast for readability
+            - Better for bright environments
+            - Reduces eye strain in daylight
+            """)
+            
+            if st.button("🌟 Apply Light Theme", use_container_width=True, type="primary" if current_theme == "Light" else "secondary"):
+                apply_theme("light")
+        
+        with col2:
+            st.markdown("### 🌙 Dark Theme")
+            st.markdown("""
+            - Dark background for comfort
+            - Reduced eye strain at night
+            - Modern professional look
+            - Better battery life (OLED screens)
+            """)
+            
+            if st.button("✨ Apply Dark Theme", use_container_width=True, type="primary" if current_theme == "Dark" else "secondary"):
+                apply_theme("dark")
+        
+        st.markdown("---")
+        
+        # Theme preview info
+        with st.expander("ℹ️ About Themes", expanded=False):
+            st.markdown("""
+            **How Theme Switching Works:**
+            
+            When you select a theme, the app updates the `.streamlit/config.toml` file with the new color scheme.
+            You'll need to **refresh the page** (F5) to see the changes take effect.
+            
+            **Theme Details:**
+            
+            **Light Theme:**
+            - Background: White (#FFFFFF)
+            - Secondary Background: Light Gray (#F0F2F6)
+            - Text: Dark Gray (#262730)
+            - Primary Color: Red (#FF4B4B)
+            
+            **Dark Theme (Current in your screenshot):**
+            - Background: Dark Navy (#0E1117)
+            - Secondary Background: Dark Gray (#262730)
+            - Text: Off-White (#FAFAFA)
+            - Primary Color: Red (#FF4B4B)
+            
+            **Note:** After changing themes, please **refresh your browser** (press F5) to apply the new theme.
+            """)
+
+def apply_theme(theme_name: str):
+    """Apply the selected theme by updating the config.toml file."""
+    from pathlib import Path
+    
+    config_dir = Path(".streamlit")
+    config_path = config_dir / "config.toml"
+    
+    # Ensure directory exists
+    config_dir.mkdir(exist_ok=True)
+    
+    if theme_name == "light":
+        # Light theme configuration
+        config_content = """# Streamlit Theme Configuration for Insyte AI
+# Light Theme - Clean and Professional
+
+[theme]
+primaryColor = "#FF4B4B"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F0F2F6"
+textColor = "#262730"
+font = "sans serif"
+
+[server]
+fileWatcherType = "auto"
+"""
+    else:  # dark theme
+        # Dark theme configuration (as shown in your screenshot)
+        config_content = """# Streamlit Theme Configuration for Insyte AI
+# Dark Theme - Modern and Eye-Friendly
+
+[theme]
+primaryColor = "#FF4B4B"
+backgroundColor = "#0E1117"
+secondaryBackgroundColor = "#262730"
+textColor = "#FAFAFA"
+font = "sans serif"
+
+[server]
+fileWatcherType = "auto"
+"""
+    
+    # Write the configuration
+    try:
+        with open(config_path, 'w') as f:
+            f.write(config_content)
+        
+        st.success(f"✅ {theme_name.capitalize()} theme applied successfully!")
+        st.info("🔄 **Please refresh the page (Press F5)** to see the theme changes.")
+        
+        # Add a JavaScript refresh button
+        st.markdown("""
+        <style>
+        .refresh-button {
+            display: inline-block;
+            padding: 0.5rem 1rem;
+            background-color: #FF4B4B;
+            color: white;
+            text-decoration: none;
+            border-radius: 0.5rem;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        .refresh-button:hover {
+            background-color: #FF6B6B;
+        }
+        </style>
+        <a href="javascript:window.location.reload();" class="refresh-button">🔄 Refresh Page Now</a>
+        """, unsafe_allow_html=True)
+        
+    except Exception as e:
+        st.error(f"❌ Failed to apply theme: {str(e)}")
 
 def run_diagnostics():
     """Run comprehensive system diagnostics."""
@@ -1185,5 +1850,79 @@ def run_diagnostics():
             - Enable caching for frequently accessed data
             """)
 
+def apply_theme(theme_name: str):
+    """Apply the selected theme by updating the config.toml file."""
+    from pathlib import Path
+    import os
+    
+    config_dir = Path(".streamlit")
+    config_path = config_dir / "config.toml"
+    
+    # Ensure directory exists
+    config_dir.mkdir(exist_ok=True)
+    
+    if theme_name == "light":
+        # Light theme configuration
+        config_content = """# Streamlit Theme Configuration for Insyte AI
+# Light Theme - Clean and Professional
+
+[theme]
+primaryColor = "#FF4B4B"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F0F2F6"
+textColor = "#262730"
+font = "sans serif"
+
+[server]
+fileWatcherType = "auto"
+"""
+    else:  # dark theme
+        # Dark theme configuration (as shown in your screenshot)
+        config_content = """# Streamlit Theme Configuration for Insyte AI
+# Dark Theme - Modern and Eye-Friendly
+
+[theme]
+primaryColor = "#FF4B4B"
+backgroundColor = "#0E1117"
+secondaryBackgroundColor = "#262730"
+textColor = "#FAFAFA"
+font = "sans serif"
+
+[server]
+fileWatcherType = "auto"
+"""
+    
+    # Write the configuration
+    try:
+        with open(config_path, 'w') as f:
+            f.write(config_content)
+        
+        st.success(f"✅ {theme_name.capitalize()} theme applied successfully!")
+        st.info("🔄 **Please refresh the page (Press F5)** to see the theme changes.")
+        
+        # Add a JavaScript refresh button
+        st.markdown("""
+        <style>
+        .refresh-button {
+            display: inline-block;
+            padding: 0.5rem 1rem;
+            background-color: #FF4B4B;
+            color: white;
+            text-decoration: none;
+            border-radius: 0.5rem;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        .refresh-button:hover {
+            background-color: #FF6B6B;
+        }
+        </style>
+        <a href="javascript:window.location.reload();" class="refresh-button">🔄 Refresh Page Now</a>
+        """, unsafe_allow_html=True)
+        
+    except Exception as e:
+        st.error(f"❌ Failed to apply theme: {str(e)}")
+
 if __name__ == "__main__":
     main()
+
